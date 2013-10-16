@@ -82,9 +82,14 @@ try:
 					core.log(msg, session, req)  #(catch-all below will log e's details)
 					raise
 
+				run_as_username = username
+				if form.has_key('run_as_root'):
+					if str(form['run_as_root']).strip()=='on':
+						run_as_username = 'root'
+
 				#write metadata
 				try:
-					open(os.path.join(metadata_dir, 'username'),'w').write('%s\n' % username)
+					open(os.path.join(metadata_dir, 'username'),'w').write('%s\n' % run_as_username)
 					open(os.path.join(metadata_dir, 'path'    ),'w').write('%s\n' % path    )
 					open(os.path.join(metadata_dir, 'status'  ),'w').write('%s\n' % 'staged')
 					open(os.path.join(metadata_dir, 't_staged'),'w').write('%s\n' % t_staged)  #keep this last -- ddrund takes the presence of this to mean it's ready
@@ -159,6 +164,15 @@ try:
 					<td>path:</td>
 					<td><input type="text" name="path" size="40" /><%= path_suggestion_txt %></td>
 				</tr>
+<%
+		if org.userIsInGroup(username, org.admin_group):
+			#begin indent
+%>
+					<td>&nbsp;</td>
+					<td><input type="checkbox" name="run_as_root" />&nbsp;run as root</td>
+<%
+		#end indent
+%>
 				<tr>
 					<td>&nbsp;</td>
 					<td><input type="submit" value="submit job" /></td>

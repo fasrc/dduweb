@@ -22,13 +22,15 @@ AUTHOR
 	Harvard FAS Research Computing
 """
 
-import os, time, pwd
+import os, time, pwd, grp
 import config, core
 
 
 email_from_address = 'rchelp@fas.harvard.edu'
 
 support_email_address = 'rchelp@fas.harvard.edu'
+
+admin_group = 'rc_admin'
 
 
 #--- page content and error messages
