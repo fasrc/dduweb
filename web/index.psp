@@ -102,6 +102,13 @@ try:
 				#FIXME
 				raise Exception("internal error: handling of incomplete form input not yet implemented")
 
+		#compute a suggestion for a path to scan
+		path_suggestion_txt = ''
+		try:
+			path_suggestion_txt = '&nbsp;(e.g. %s)' % org.getHomeDirectory(username)
+		except Exception:
+			pass
+
 
 
 		#--- BEGIN TEMPLATE CODE...
@@ -150,7 +157,7 @@ try:
 			<table>
 				<tr>
 					<td>path:</td>
-					<td><input type="text" name="path" size="40" /></td>
+					<td><input type="text" name="path" size="40" /><%= path_suggestion_txt %></td>
 				</tr>
 				<tr>
 					<td>&nbsp;</td>

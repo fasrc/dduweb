@@ -132,6 +132,10 @@ def getFullName(username):
 	if realname=='': realname = username
 	return realname
 
+def getHomeDirectory(username):
+	"""return the home directory of the user"""
+	return pwd.getpwnam(username)[5]
+
 def getEmailAddress(username):
 	"""return the email address of the user
 	
