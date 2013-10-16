@@ -1,0 +1,207 @@
+<%
+"""
+Copyright (c) 2013
+Harvard FAS Research Computing
+John Brunelle <john_brunelle@harvard.edu>
+All right reserved.
+
+index.psp -- an example webpage
+
+DESCRIPTION
+	This is the template for building webpages.  Any code between pairs of 
+	comments like this:
+
+		#--- BEGIN TEMPLATE CODE...
+		#--- ...END TEMPLATE CODE
+	
+	should not need to be modified.
+
+REQUIREMENTS
+	n/a
+
+AUTHOR
+	John Brunelle <john_brunelle@harvard.edu>
+	Harvard FAS Research Computing
+"""
+
+
+
+#--- BEGIN TEMPLATE CODE...
+
+class BreakOut(Exception): pass
+
+try:
+	try:
+		from lilpsp import config, core, org
+		import time
+
+		req.add_common_vars()
+		
+		msg = "request from ip [%s] from user [%s]" % (req.subprocess_env['REMOTE_ADDR'], core.getUsername(session, req))
+		core.log(msg, session, req)
+		
+		core.sessionCheck(session, req)
+		
+		base_url_path = req.subprocess_env['REQUEST_URI'].split('?',1)[0]  #e.g. /PATH/FILENAME.psp, of 'https://SERVER/PATH/FILENAME.psp?FOO=BAR'
+		base_url_dir = os.path.dirname(base_url_path)  #e.g. /PATH, of 'https://SERVER/PATH/FILENAME.psp?FOO=BAR'
+		base_fs_dir  = os.path.dirname(req.subprocess_env['SCRIPT_FILENAME'])
+		
+		#--- ...END TEMPLATE CODE
+
+
+
+		import urllib, errno
+		import ddupy
+
+
+		username = core.getUsername(session, req)
+		if username is None:
+			raise Exception("internal error: ddu web must be configured to use authentication")
+
+		base_data_dir = os.path.join(base_fs_dir, 'data')
+
+
+		#---
+
+			
+
+		if req.subprocess_env['REQUEST_METHOD']=='POST' and req.headers_in.has_key('Referer') and req.headers_in['Referer'].split('?')[0].endswith(req.subprocess_env['REQUEST_URI'].split('?')[0]):
+			if form.has_key('job') and form.has_key('acl'):
+				job = str(form['job']).strip()
+				acl = str(form['acl']).strip()
+				
+				#only allow the owner to modify sharing
+				if ddupy.getUser(job)!=username:
+					req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+					msg = "permission denied for user [%s] to job [%s] sharing" % (username, job)
+					core.log(msg, session, req)
+%>
+					<p>
+					<%= org.err_str %>
+					</p>
+					<p>
+					Permission denied.
+					</p>
+<%
+					raise BreakOut()
+
+				metadata_dir = os.path.join(base_data_dir, job, 'metadata')
+				open(os.path.join(metadata_dir,'acl'),'w').write(acl.strip()+'\n')
+
+				util.redirect(req, base_url_dir)
+			else:
+				#FIXME
+				raise Exception("sharing update failed because both job and acl not given")
+
+
+
+		#--- BEGIN TEMPLATE CODE...
+
+		req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+		wrote_header = True
+		
+		if config.AUTH_TYPE=='FORM': req.write(org.html_logout_link(session, req))
+
+		#--- ...END TEMPLATE CODE
+
+
+		if form.has_key('job') and form.has_key('path'):
+			job = str(form['job']).strip()
+			path = str(form['path']).strip()
+			
+			#only allow the owner to modify sharing
+			if ddupy.getUser(job)!=username:
+				req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+				msg = "permission denied for user [%s] to job [%s] sharing" % (username, job)
+				core.log(msg, session, req)
+%>
+				<p>
+				<%= org.err_str %>
+				</p>
+				<p>
+				Permission denied.
+				</p>
+<%
+				raise BreakOut()
+			
+			metadata_dir = os.path.join(base_data_dir, job, 'metadata')
+
+			joburl = os.path.join(base_url_dir, 'job.psp?job=%s&path=%s' % (urllib.quote(job), urllib.quote(path)))
+			
+			try:
+				acl = open(os.path.join(metadata_dir,'acl'),'r').read().strip()
+			except IOError, e:
+				if e.errno != errno.ENOENT: raise
+				acl = ''
+
+			result_link = '<a href="job.psp?job=%s&path=%s">results</a>' % (urllib.quote(job), urllib.quote(path))
+		else:
+			raise Exception("sharing display failed because no job given")
+		#end indent
+%>
+		
+		<table style="margin:auto;">
+		
+		<tr>
+		<td>
+		<p style="width:40em;">
+		Use this page to share the results of a storage usage computation.
+		By default, results are only viewable by you, the owner.
+		In the box below, enter lines such as <em>user:USERNAME</em> or <em>group:GROUPNAME</em>, where <em>USERNAME</em> and <em>GROUPNAME</em> are specific users or groups on the cluster.
+		Enter one per line in the text box.
+		</p>
+		<p style="width:40em;">
+		Once the results are shared, other users can use the url in the <em>results</em> link below to view the data, too.
+		</p>
+		</td>
+		</tr>
+		
+		<tr>
+		<td>
+		<span style="font-size:larger;"><strong>job to which this applies</strong></span>: <%= result_link %>
+		</td>
+		</tr>
+
+		<tr>
+		<td>
+		<form method="post">
+			<table>
+				<tr>
+					<td>list of allowed users and groups:</td>
+				</tr>
+				<tr>
+					<td><textarea name="acl" cols="40" rows="8"><%= acl %></textarea></td>
+				</tr>
+				<tr>
+					<td><input type="submit" value="save" /></td>
+				</tr>
+			</table>
+		</form>
+		</td>
+		</tr>
+
+
+<%
+	#--- BEGIN TEMPLATE CODE...
+		
+	except BreakOut:
+		pass
+	
+	req.write(open(os.path.join(base_fs_dir, 'footer.html')).read())
+	wrote_footer = True
+except apache.SERVER_RETURN:
+	##if it's re-raised, sessions start over; passing seems wrong but it's the only way I know of to make sessions persist across redirect
+	#raise
+	pass
+except Exception, e:
+	if not ( 'core' in globals() and 'org' in globals() ):
+		raise  #just bailout and let the server handle it (if configured with PythonDebug On, the traceback will be shown to the user)
+	else:
+		msg = "ERROR: exception when handling user [%s]: %s" % (core.getUsername(session, req), e)
+		core.log(msg, session, req, e)
+		if not 'wrote_header' in globals() and 'base_fs_dir' in globals(): req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+		req.write(org.errmsg_general(session, req))
+		if not 'wrote_footer' in globals() and 'base_fs_dir' in globals(): req.write(open(os.path.join(base_fs_dir, 'footer.html')).read())
+
+#--- ...END TEMPLATE CODE
+%>

@@ -1,0 +1,184 @@
+lilpsp -- a little psp website framework
+
+John Brunelle <john_brunelle@harvard.edu>
+Harvard FAS Research Computing
+
+
+INTRODUCTION
+============
+
+This is a little framework for creating simple, dynamic websites using psp 
+(mod_python's python sever pages).  It covers basic logging, error catching, 
+sessions/authentication, etc., and it also provides some wrappers for common 
+functionality like sending email, executing shell code, etc.
+
+To create a website, just stick this somewhere on the filesystem and point an 
+apache config at it (see below for details).  To do anything real, you will 
+surely want to change the options in lilpsp/config.py and the html blurbs in 
+lilpsp/org.py, fill in index.psp, and add some other .psp pages.
+
+The org.py module also defines some functions for getting information about 
+users, authenticating users, etc. that may or may not be used, and may or may 
+not require implementation, depending on your configuration.
+
+
+ORIENTATION AND LAYOUT
+======================
+
+The package will sit somewhere on the filesystem, /PATH/TO/MYSITE/, and 
+therefore look like this:
+
+/PATH/TO/MYSITE/lilpsp/*.py
+/PATH/TO/MYSITE/*.psp
+/PATH/TO/MYSITE/*.html
+
+By default, the site will log to /var/tmp/MYSITE.log.
+
+From the lilpsp python package, it's expected you will want to modify:
+
+    lilpsp/config.py
+    lilpsp/org.py
+
+(see below for details) plus add any other python modules providing specific 
+site functionality.  You will also want to modify:
+
+    header.html
+    footer.html
+
+as these are designed to be included at the top and bottom of every .psp page.  
+The file login.psp is not intended to be modified; its customizable content is 
+constructed from the above files.
+
+The rest of your site is up to you.  The file:
+
+    index.psp
+
+provides the basic example for a dynamic html page.  Content between the 
+`#--- BEGIN TEMPLATE CODE...` and `#--- ...END TEMPLATE CODE` should not need 
+to be modified.  There are also:
+
+    lilpsp/exampleHandler.py
+    exampleHandlerFailure.psp
+
+which provide an example of dynamic creation of non-html content, in this case 
+a png image.  Delete these files if you're not using them.
+
+
+CONFIGURATION
+=============
+
+Basics
+------
+
+There are two main files designed for tweaking the site.  The first is:
+
+    core.py
+
+This defines basic parameters like where to log, and what type of 
+authentication, if any, to require.  See the comments in the file for details 
+on each option.
+
+The other is:
+
+    org.py
+
+This has the html blurbs used in standard pages (error pages, login page (if 
+used), etc.); tweak these as desired.  There are also methods used for getting 
+user information about users, authenticating users, etc.  A couple of these are 
+even just defined for convenience and are never called by any of the provided 
+content.  However, the function org.authenticateUser() must be implemented if 
+using AUTH_TYPE='FORM' (see below).
+
+Authentication
+--------------
+
+Included in config.py is a parameter AUTH_TYPE for choosing what type of 
+authentication to require in order to use the website.  There is currently 
+support for three modes of authentication -- none (NONE), relying on apache to 
+do it (HTTP), and internal implementation (FORM).  All dynamic content must 
+call core.sessionCheck() in order for these choices to be respected.
+
+For NONE, core.sessionCheck() does nothing.
+
+For HTTP, core.sessionCheck() just makes sure req.user is set.
+
+For FORM, core.sessionCheck() redirects any non-authenticated request to 
+login.psp, which presents a form for authentication.  That page calls 
+org.authenticateUser(), which you must implement.  Upon successful 
+authentication, the user will be redirected back to the original page 
+requested.  PSP's cookie-based session objects 
+(http://www.modpython.org/live/current/doc-html/pyapi-sess.html) are used to 
+persist the authenticated session across http requests.  The login.psp page 
+serves as a logout page, too (visiting this page while logged in will 
+automatically log the user out).
+
+
+APACHE CONFIGURATION
+====================
+
+Apache will need something like the following:
+
+    Alias /MYSITE "/PATH/TO/MYSITE/"
+    <Location "/MYSITE">
+        AddHandler mod_python .psp
+        PythonHandler mod_python.psp
+        PythonDebug Off
+        PythonPath "['/PATH/TO/MYSITE']+sys.path"
+
+        ##cookie path
+		##use the second case for mod_python >= 3.3
+		##use the first for earlier versions
+        #PythonOption ApplicationPath /MYSITE
+        PythonOption mod_python.session.application_path /MYSITE
+
+        DirectoryIndex index.psp
+    </Location>
+
+Set PythonDebug On if you wish tracebacks to be delivered to the browser when 
+uncaught exceptions occur (almost all exceptions are caught, but there is 
+always the possibility).
+
+To use exampleHandler.py and exampleHandlerFailure.py, as an example of 
+implementing direct handlers for non-html content, apache will need something 
+like the following:
+
+    <Location "/MYSITE/example.png">
+        SetHandler mod_python
+        PythonHandler lilpsp.exampleHandler::dynamicPNG
+    </Location>
+
+When setting up multiple sites using lilpsp, I've had sites get confused about 
+which .py files its using -- i.e. one site would be using the other's, as if 
+all apache Locations got all PythonPath modifications.  I don't understand 
+this, therefore in practice I rename lilpsp to something unique for each site 
+on the same server.
+
+
+CODE CONSIDERATIONS
+===================
+
+Error Handling
+--------------
+
+The basic design is that the .py files raise Exceptions with informative error 
+messages (and do not log these), and the .psp pages decide what to do with them 
+(log, serve up an error page, bail out, etc.).  The value of DEBUG in config.py 
+controls how much detail is in the exception and log messages, and mod_python's 
+normal PythonDebug directive controls how much is detail is delivered to the 
+browser (in the case of uncaught exceptions).  You'll notice that the .psp 
+pages are basically wrapped in one big try/except in order to avoid uncaught 
+exceptions.  Each .psp page also defines a BreakOut Exception used to quit page 
+generation early, usually after an error message has been written 
+(using apache.SERVER_RETURN would arguably be better).
+
+Directly handlers, e.g. exampleHandler.py, since, like .psp pages, they are 
+responsible for entire response content should not raise exceptions, should 
+likewise catch and handle all exceptions.
+
+Miscellaneous
+-------------
+
+It is assumed that all .psp pages are in the same directory and referred to by 
+the same base url, and all dynamical non-html content is similarly represented 
+by a filename off that base url.  For example, the login.psp redirection 
+assumes it's a sibling file with whatever calls it.

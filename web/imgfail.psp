@@ -1,0 +1,59 @@
+<%
+"""
+Copyright (c) 2013
+Harvard FAS Research Computing
+John Brunelle <john_brunelle@harvard.edu>
+All right reserved.
+
+error handling for exampleHandler.py
+
+DESCRIPTION
+	Provide a page to use when dynamic non-html content creation fails.  The 
+	.psp pages handle errors self-sufficently, but content that is not 
+	Content-Type:text/html needs to redirect to something like this.
+
+REQUIREMENTS
+	n/a
+
+AUTHOR
+	John Brunelle <john_brunelle@harvard.edu>
+	Harvard FAS Research Computing
+"""
+
+
+#--- BEGIN TEMPLATE CODE...
+
+try:
+	from lilpsp import core
+	req.add_common_vars()
+	msg = "request from ip [%s] from user [%s]" % (req.subprocess_env['REMOTE_ADDR'], core.getUsername(session, req))
+	core.log(msg, session, req)
+except apache.SERVER_RETURN:
+	raise
+except Exception:
+	pass
+#end indent
+%>
+<%@ include file="header.html" %>
+<%
+try:
+	#--- ...END TEMPLATE CODE
+
+
+	from lilpsp import org
+	req.write(org.errmsg_general(session, req))
+
+
+	#--- BEGIN TEMPLATE CODE...
+
+except apache.SERVER_RETURN:
+	raise
+except Exception:
+	req.write("<h3>ERROR</h3>")
+#end indent
+%>
+<%@ include file="footer.html" %>
+<%
+
+#--- ...END TEMPLATE CODE
+%>

@@ -1,0 +1,17 @@
+#!/bin/bash
+#BSUB -q dduweb
+#BSUB -o lsf.out
+#BSUB -e lsf.err
+#BSUB -u john_brunelle@harvard.edu
+
+sudo -u 'DDU_USER' /odyssey/ddu/sw/bin/philesight_wrapper.sh --one-file-system --db philesight.db --index 'DDU_PATH' >philesight.out 2>philesight.err
+status=$?
+
+echo $status > exit_status
+
+if [ -w philesight.db ]; then
+	chgrp apache philesight.db
+	chmod 640 philesight.db
+fi
+
+exit $status

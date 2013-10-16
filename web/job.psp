@@ -1,0 +1,175 @@
+<%
+"""
+Copyright (c) 2013
+Harvard FAS Research Computing
+John Brunelle <john_brunelle@harvard.edu>
+All right reserved.
+
+index.psp -- an example webpage
+
+DESCRIPTION
+	This is the template for building webpages.  Any code between pairs of 
+	comments like this:
+
+		#--- BEGIN TEMPLATE CODE...
+		#--- ...END TEMPLATE CODE
+	
+	should not need to be modified.
+
+REQUIREMENTS
+	n/a
+
+AUTHOR
+	John Brunelle <john_brunelle@harvard.edu>
+	Harvard FAS Research Computing
+"""
+
+
+#--- BEGIN TEMPLATE CODE...
+
+class BreakOut(Exception): pass
+
+try:
+	try:
+		from lilpsp import config, core, org
+		import time
+
+		req.add_common_vars()
+		
+		msg = "request from ip [%s] from user [%s]" % (req.subprocess_env['REMOTE_ADDR'], core.getUsername(session, req))
+		core.log(msg, session, req)
+		
+		core.sessionCheck(session, req)
+		
+		base_url_path = req.subprocess_env['REQUEST_URI'].split('?',1)[0]  #e.g. /PATH/FILENAME.psp, of 'https://SERVER/PATH/FILENAME.psp?FOO=BAR'
+		base_url_dir = os.path.dirname(base_url_path)  #e.g. /PATH, of 'https://SERVER/PATH/FILENAME.psp?FOO=BAR'
+		base_fs_dir  = os.path.dirname(req.subprocess_env['SCRIPT_FILENAME'])
+
+		req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+		wrote_header = True
+
+		#--- ...END TEMPLATE CODE
+
+
+
+		import re, urllib, urllib2, errno
+		import ddupy
+
+
+		username = core.getUsername(session, req)
+		if username is None:
+			raise Exception("internal error: ddu web must be configured to use authentication")
+
+		base_data_dir = os.path.join(base_fs_dir, 'data')
+
+
+		#---
+
+		if form.has_key('job') and form.has_key('path'):
+			#(philesight can handle an empty path (in which case it graphs the top level), but in practice I always give it)
+
+			#(these will be the un-quoted values (i.e. '/' instead of '%2F')
+			path = str(form['path']).strip()
+			job  = str(form['job']).strip()
+			
+			metadata_dir = os.path.join(base_data_dir, job, 'metadata')
+
+			#acl check
+			allowed = False
+			if ddupy.getUser(job)==username:
+				allowed = True
+			else:
+				try:
+					acl = open(os.path.join(metadata_dir,'acl'),'r').read().strip()
+				except IOError, e:
+					if e.errno != errno.ENOENT: raise
+					acl = ''
+				else:
+					for line in acl.split('\n'):
+						if line!='':
+							role, name = line.split(':',1)
+							if (role=='user' and name==username) or (role=='group' and org.userIsInGroup(username, name)):
+								allowed = True
+								break
+			if not allowed:
+				msg = "permission denied for user [%s] to job [%s] results" % (username, job)
+				core.log(msg, session, req)
+%>
+				<p>
+				<%= org.err_str %>
+				</p>
+				<p>
+				Permission denied.
+				</p>
+<%
+				raise BreakOut()
+		
+			status = open(os.path.join(metadata_dir,'status'),'r').read().strip()
+			if status!='done':
+				#begin indent
+%>
+				<p>
+				Unable to display results -- job is still pending, running, or otherwise did not finish successfully.
+				</p>
+<%
+				raise BreakOut()
+
+			imgmapstr = None
+			for key in form.keys():
+				if key.startswith('?'):
+					imgmapstr = key
+
+			if req.is_https():
+				protocol = 'https'
+			else:
+				protocol = 'http'
+		
+			if imgmapstr is not None:
+				#philesight uses "meta http-equiv=refresh" in this case; read it to resolve the actual path, and build the final url
+				joburl = '%s://localhost/%s/data/%s/philesight/?path=%s&%s' % (protocol, base_url_dir.lstrip('/'), job, urllib.quote(path), imgmapstr)
+				msg = 'job data request for job [%s], path [%s] with imgmapstr [%s]; requesting [%s] to resolve' % (job, path, imgmapstr, joburl)
+				core.log(msg, session, req)
+				redirecthtml = urllib2.urlopen(joburl).read()
+				path = urllib.unquote(redirecthtml.split('url=?path=')[1].split('">')[0])
+				msg = 'resolved imgmapstr [%s] to [%s]' % (imgmapstr, path)
+				core.log(msg, session, req)
+			
+			joburl = '%s://localhost/%s/data/%s/philesight/?path=%s' % (protocol, base_url_dir.lstrip('/'), job, urllib.quote(path))
+			msg = 'job data request for job [%s], path [%s]; serving [%s]' % (job, path, joburl)
+			core.log(msg, session, req)
+			jobhtml = urllib2.urlopen(joburl).read()
+
+			#replace direct links with proxy links
+			jobhtml = jobhtml.replace('src="?cmd=img', 'src="img.png?job=%s' % urllib.quote(job))
+			jobhtml = jobhtml.replace('href="?path=', 'href="job.psp?job=%s&path=' % urllib.quote(job))
+
+			req.write(jobhtml)
+		else:
+			#FIXME
+			raise Exception("internal error: handling of incomplete job query string not yet implemented")
+
+
+
+	#--- BEGIN TEMPLATE CODE...
+		
+	except BreakOut:
+		pass
+	
+	req.write(open(os.path.join(base_fs_dir, 'footer.html')).read())
+	wrote_footer = True
+except apache.SERVER_RETURN:
+	##if it's re-raised, sessions start over; passing seems wrong but it's the only way I know of to make sessions persist across redirect
+	#raise
+	pass
+except Exception, e:
+	if not ( 'core' in globals() and 'org' in globals() ):
+		raise  #just bailout and let the server handle it (if configured with PythonDebug On, the traceback will be shown to the user)
+	else:
+		msg = "ERROR: exception when handling user [%s]: %s" % (core.getUsername(session, req), e)
+		core.log(msg, session, req, e)
+		if not 'wrote_header' in globals() and 'base_fs_dir' in globals(): req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+		req.write(org.errmsg_general(session, req))
+		if not 'wrote_footer' in globals() and 'base_fs_dir' in globals(): req.write(open(os.path.join(base_fs_dir, 'footer.html')).read())
+
+#--- ...END TEMPLATE CODE
+%>

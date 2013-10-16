@@ -1,0 +1,358 @@
+#!/usr/bin/env bash
+
+# Copyright (c) 2013
+# Harvard FAS Research Computing
+# John Brunelle <john_brunelle@harvard.edu>
+# All right reserved.
+
+helpstr="\
+NAME
+	ddurund - run ddu jobs staged by the web interface
+
+SYNOPSIS
+	ddurund ...
+
+DESCRIPTION
+	n/a
+
+OPTIONS
+	--log-file PATH
+		File to which to send output.  Default is /dev/stdout, except if 
+		--deamonize is given, in which case it's /dev/null and specifying 
+		--log-file is highly recommended.
+
+	-d, --debug
+		Output extra verbose debugging information.
+
+	--daemonize
+		Run in daemon mode.  In daemon mode, all uncaught stdout and stderr is 
+		also sent to the --log-file.
+
+	-h, --help
+		Print this help.
+
+REQUIREMENTS
+	n/a
+
+BUGS/TODO
+	n/a
+
+AUTHOR
+	Copyright (c) 2013
+	Harvard FAS Research Computing
+	John Brunelle <john_brunelle@harvard.edu>
+	All right reserved.
+"
+
+#if this is only being run to get the help, just do it and quit
+getopt -q -l help -o h -- "$@" | egrep -q '^ -h|^ --help' && echo -n "$helpstr" && exit
+
+
+#--- daemonize, if applicable
+
+#if daemonizing, do that right away (can't do normal full getopt yet since that modifies the arguments)
+#see https://raw.github.com/jabrcx/miscnix/master/bin/daemonize for full details -- this is extracted from there
+daemonize=false;
+getopt -q -l daemonize -o h -- "$@" | egrep -q '^ --daemonize' && daemonize=true
+if $daemonize; then
+	if [ -z "${DAEMONIZED:-}" ]; then
+		export DAEMONIZED=1
+		setsid "$0" "$@"
+		exit
+	elif [ "$DAEMONIZED" -eq 1 ]; then
+		export DAEMONIZED=2
+		"$0" "$@" <&0 &
+		exit
+	elif [ "$DAEMONIZED" -eq 2 ]; then
+		DAEMONIZED=y
+		cd /
+		test -t 0 && exec 0</dev/null
+		test -t 1 && exec 1>>/dev/null
+		test -t 2 && exec 2>>/dev/null
+		unset DAEMONIZED
+	else
+		echo "*** ERROR *** the DAEMONIZED environment variable appears to already be in use for some other purpose" >&2
+		exit 1
+	fi
+fi
+
+
+#--- default values for parameters
+
+DDU_ROOT="$(readlink -e "$(dirname "$0")/../..")"
+philesight_sw_dir="$DDU_ROOT/sw/philesight"
+base_data_dir="$DDU_ROOT/web/data"
+
+debug=false
+log_file='/dev/stdout'
+
+loop=true
+loop_interval=10  #seconds
+
+
+#--- getopt
+
+args=$(getopt -n "$(basename "$0")" -l log-file:,debug,daemonize,help -o pdh -- "$@")
+if [ $? -ne 0 ]; then
+	exit 65  #(getopt will have written the error message)
+fi
+eval set -- "$args"
+while [ ! -z "$1" ]; do
+	case "$1" in
+		--log-file)
+			log_file="$2"
+			shift
+			
+			#do this ASAP
+			#(or remove this if you don't want the possiblity of un-prefixed lines in the log (but then it will be lost to /dev/null))
+			if $daemonize; then
+				exec 1>>"$log_file"
+				exec 2>>"$log_file"
+			fi
+			
+			;;
+		
+		-d | --debug)
+			debug=true
+			;;
+
+		#(this will have been handled earlier, just resetting setting the parameter value now)
+		--daemonize)
+			daemonize=true
+			;;
+
+		#(this should've been caught earlier, just here for completeness)
+		-h | --help)
+			echo -n "$helpstr"
+			exit 0
+			;;
+
+		--) 
+			shift
+			break
+			;;
+	esac
+	shift
+done
+
+#Harvard FAS RC only
+[[ $(hostname -f) == *.rc.fas.harvard.edu ]] && [ -r /etc/profile.d/lsf.sh ] && source /etc/profile.d/lsf.sh
+
+set -u
+
+function log () {
+	prefix="$(date '+%Y-%m-%d %H:%M:%S'): pid $$"
+	##if using a $pretend parameter
+	#$pretend && prefix="$prefix: pretend mode"
+	cat | sed s/^/"${prefix}: "'/' >> "$log_file"
+}
+
+function fail () {
+	jobdir="$1"
+	( echo "failed" > "$1"/metadata/status ) 2>&1 | log
+	( date '+%s' > "$jobdir"/metadata/t_failed ) 2>&1 | log
+}
+
+trap 'echo "exiting, pid [$$]" | log' EXIT
+
+echo "starting, pid [$$]" | log
+
+
+#--- main loop
+
+while true; do
+	for jobdir in "$base_data_dir"/*/*/*; do
+		result=''
+
+		$debug && echo "working on jobdir [$jobdir]" | log
+
+
+		#--- basic sanity checks and setup
+
+		#skip jobs that are currently being staged (the status file may not be ready yet)
+		if ! [ -e "$jobdir"/metadata/t_staged ]; then
+			$debug && echo "skipping jobdir [$jobdir] since it is not fully staged" | log
+			continue
+		fi
+
+		#get status
+		status="$( exec 5>&1; cat "$jobdir"/metadata/status 2>&1 >&5 5>&- | log >&2 5>&-; exec 5>&-)"  #(redirect stderr through log processing)
+		if [ $? -ne 0 ] || [ -z "$status" ]; then
+			echo "*** ERROR *** unable to get status for jobdir [$jobdir]" | log
+			fail "$jobdir"
+			continue
+		fi
+		status_old="$status"
+		status_new=''
+
+		#skip done, failed, and deleted jobs
+		if [ "$status" = 'done' ]; then
+			$debug && echo "skipping done job [%jobdir]" | log
+			continue
+		fi
+		if [ "$status" = 'failed' ]; then
+			$debug && echo "skipping failed job [%jobdir]" | log
+			continue
+		fi
+		if [ "$status" = 'deleted' ]; then
+			$debug && echo "skipping deleted job [%jobdir]" | log
+			continue
+		fi
+
+
+		#--- redirect i/o to a file within the jobdir
+		
+		runlog="$jobdir/$(basename "$0").err"
+		
+		touch "$runlog" 2>&1 | log
+		if [ ${PIPESTATUS[0]} -ne 0 ]; then
+			echo "*** ERROR *** unable to write to runlog [$runlog]" | log
+			fail "$jobdir"
+			continue
+		fi
+
+		#save stdout and stderr to new file descriptors 3 and 4, respectively
+		exec 5>&1
+		exec 6>&2
+		
+		#redirect all stdout and stderr to this job's log
+		exec 1>>"$runlog"
+		exec 2>>"$runlog"
+
+
+		#--- handle each case
+		
+		#this is whether or not this script succeeds in doing what it's expected to do (not whether or not the job succeeded)
+		update_success=false
+
+		#(using a single-pass loop just to take advantage of the continue statement)
+		x=false
+		until $x; do
+			x=true
+
+			if [ "$status" = 'staged' ]; then
+				#get user
+				user="$(cat "$jobdir"/metadata/username)"
+				if [ $? -ne 0 ] || [ -z "$user" ]; then
+					echo "*** ERROR *** unable to get user" >&2
+					continue
+				fi
+				id "$user" >/dev/null || continue
+
+				#get path
+				path="$(cat "$jobdir/metadata/path")"
+				if [ $? -ne 0 ] || [ -z "$path" ]; then
+					echo "*** ERROR *** unable to get path" >&2
+					continue
+				fi
+
+				#security check on DDU_USER/$user and DDU_PATH/$path
+				if echo "$user" | grep -q "'"; then
+					echo "*** ERROR *** unsafe user [$user], setting job to failed" >&2
+					status_new='failed'
+					continue
+				fi
+				if echo "$path" | grep -q "'"; then
+					echo "*** ERROR *** unsafe path [$path], setting job to failed" >&2
+					status_new='failed'
+					continue
+				fi
+				
+				#existence check
+				stat "$path" >/dev/null || continue
+
+				#create and cd to philesight dir
+				install -o "$user" -g apache -m 750 -d "$jobdir"/philesight || continue
+				cd "$jobdir"/philesight || continue
+				#install -o apache -g rc_admin -m 640 "$DDU_ROOT"/misc/htaccess.philesight .htaccess || continue
+				install -o "$user" -g apache -m 770 -d cache || continue
+				ln -s "$philesight_sw_dir/philesight.cgi" index.cgi || continue
+
+				#submit job
+				batchjobid=$(cat /odyssey/ddu/misc/philesight.bsub.template | sed -e "s?DDU_USER?$user?" -e "s?DDU_PATH?$path?" | bsub | grep -oP '(?<=Job <)\d+(?=>)')
+				if [ $? -ne 0 ] || [ -z "$batchjobid" ]; then
+					echo "*** ERROR *** unable to submit job" >&2
+					continue
+				fi
+				echo "$batchjobid" > "$jobdir"/metadata/batchjobid || continue
+				echo 'queued' > "$jobdir"/metadata/status
+				date '+%s' > "$jobdir"/metadata/t_queued || continue
+
+				status_new='queued'
+				update_success=true
+				continue
+			
+			elif [ "$status" = 'queued' ] || [ "$status" = 'running' ]; then
+				#get batch job id
+				batchjobid="$(cat "$jobdir/metadata/batchjobid")"
+				if [ $? -ne 0 ] || [ -z "$batchjobid" ]; then
+					echo "*** ERROR *** unable to get batchjobid" >&2
+					continue
+				fi
+
+				batchjobstatus="$(bjobs "$batchjobid" | awk 'NR==2 {print $3}')"
+				if [ "$batchjobstatus" = 'EXIT' ] || ( [ -z "$batchjobstatus" ] && [ -r "jobdir"/philesight/exit_status ] && [ "$(cat "jobdir"/philesight/exit_status 2>/dev/null)" != '0' ] ); then
+					echo "*** ERROR *** batch job [$batchjobid] failed" >&2
+					echo 'failed' > "$jobdir"/metadata/status
+					date '+%s' > "$jobdir"/metadata/t_failed || continue
+					
+					status_new='failed'
+					update_success=true
+					continue
+				elif [ "$batchjobstatus" = 'DONE' ]; then
+					echo 'done' > "$jobdir"/metadata/status
+					date '+%s' > "$jobdir"/metadata/t_done || continue
+					
+					status_new='done'
+					update_success=true
+					continue
+				elif [ "$batchjobstatus" = 'RUN' ]; then
+					echo 'running' > "$jobdir"/metadata/status
+					date '+%s' > "$jobdir"/metadata/t_running || continue
+					
+					status_new='running'
+					update_success=true
+					continue
+				elif [ "$batchjobstatus" = 'PEND' ]; then
+					status_new='queued'
+					update_success=true
+					continue
+				else
+					#user-suspsended, system-suspended, etc.
+					#this will result in a log message every time, because ddu does not have any statuses corresponding to batch job suspended states
+					#and the status recorded on disk will not change from queued or running
+					#in practice, don't allow suspension on these jobs
+					#(but the only real issue is confusion from the log and the status recorded on disk)
+					status_new="$batchjobstatus"
+					update_success=true
+					continue
+				fi
+			fi
+		done
+
+		#restore stdout and stderr
+		exec 1>&5-
+		exec 2>&6-
+
+		if ! $update_success; then
+			echo "*** ERROR *** unable to update jobdir [$jobdir], see [$runlog] for details" | log
+			fail "$jobdir"
+			status_new='failed'
+		fi
+
+		if [ "$status_new" != "$status_old" ]; then
+			if [ "$status_new" = 'failed' ]; then
+				echo "attempted to update jobdir [$jobdir] from status [$status_old] to [$status_new]" | log
+			else
+				echo "updated jobdir [$jobdir] from status [$status_old] to [$status_new]" | log
+			fi
+		fi
+		
+		$debug && echo "done working on jobdir [$jobdir]" | log
+
+
+	done
+	
+	$loop || break
+	sleep $loop_interval
+done

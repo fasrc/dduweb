@@ -1,0 +1,128 @@
+<%
+"""
+Copyright (c) 2013
+Harvard FAS Research Computing
+John Brunelle <john_brunelle@harvard.edu>
+All right reserved.
+
+index.psp -- an example webpage
+
+DESCRIPTION
+	This is the template for building webpages.  Any code between pairs of 
+	comments like this:
+
+		#--- BEGIN TEMPLATE CODE...
+		#--- ...END TEMPLATE CODE
+	
+	should not need to be modified.
+
+REQUIREMENTS
+	n/a
+
+AUTHOR
+	John Brunelle <john_brunelle@harvard.edu>
+	Harvard FAS Research Computing
+"""
+
+
+
+#--- BEGIN TEMPLATE CODE...
+
+class BreakOut(Exception): pass
+
+try:
+	try:
+		from lilpsp import config, core, org
+		import time
+
+		req.add_common_vars()
+		
+		msg = "request from ip [%s] from user [%s]" % (req.subprocess_env['REMOTE_ADDR'], core.getUsername(session, req))
+		core.log(msg, session, req)
+		
+		core.sessionCheck(session, req)
+		
+		base_url_path = req.subprocess_env['REQUEST_URI'].split('?',1)[0]  #e.g. /PATH/FILENAME.psp, of 'https://SERVER/PATH/FILENAME.psp?FOO=BAR'
+		base_url_dir = os.path.dirname(base_url_path)  #e.g. /PATH, of 'https://SERVER/PATH/FILENAME.psp?FOO=BAR'
+		base_fs_dir  = os.path.dirname(req.subprocess_env['SCRIPT_FILENAME'])
+		
+		#--- ...END TEMPLATE CODE
+
+
+
+		import urllib
+		import ddupy
+
+
+		username = core.getUsername(session, req)
+		if username is None:
+			raise Exception("internal error: ddu web must be configured to use authentication")
+
+		base_data_dir = os.path.join(base_fs_dir, 'data')
+
+
+		#---
+
+
+		if form.has_key('job'):
+			job = str(form['job']).strip()
+			
+			#only allow the owner to delete
+			if ddupy.getUser(job)!=username:
+				req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+				msg = "permission denied for user [%s] to job [%s] delete" % (username, job)
+				core.log(msg, session, req)
+%>
+				<p>
+				<%= org.err_str %>
+				</p>
+				<p>
+				Permission denied.
+				</p>
+<%
+				raise BreakOut()
+			
+			metadata_dir = os.path.join(base_data_dir, job, 'metadata')
+			open(os.path.join(metadata_dir,'status'),'w').write('deleted')
+
+			util.redirect(req, base_url_dir)
+		else:
+			#FIXME
+			raise Exception("deletion failed because no job given")
+
+
+
+		#--- BEGIN TEMPLATE CODE...
+
+		req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+		wrote_header = True
+		
+		if config.AUTH_TYPE=='FORM': req.write(org.html_logout_link(session, req))
+
+		#--- ...END TEMPLATE CODE
+
+
+
+	#--- BEGIN TEMPLATE CODE...
+		
+	except BreakOut:
+		pass
+	
+	req.write(open(os.path.join(base_fs_dir, 'footer.html')).read())
+	wrote_footer = True
+except apache.SERVER_RETURN:
+	##if it's re-raised, sessions start over; passing seems wrong but it's the only way I know of to make sessions persist across redirect
+	#raise
+	pass
+except Exception, e:
+	if not ( 'core' in globals() and 'org' in globals() ):
+		raise  #just bailout and let the server handle it (if configured with PythonDebug On, the traceback will be shown to the user)
+	else:
+		msg = "ERROR: exception when handling user [%s]: %s" % (core.getUsername(session, req), e)
+		core.log(msg, session, req, e)
+		if not 'wrote_header' in globals() and 'base_fs_dir' in globals(): req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+		req.write(org.errmsg_general(session, req))
+		if not 'wrote_footer' in globals() and 'base_fs_dir' in globals(): req.write(open(os.path.join(base_fs_dir, 'footer.html')).read())
+
+#--- ...END TEMPLATE CODE
+%>

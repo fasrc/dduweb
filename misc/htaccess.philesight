@@ -1,0 +1,9 @@
+Options +Indexes
+DirectoryIndex index.cgi
+Options +ExecCGI
+AddHandler cgi-script .cgi
+
+#add SetEnvIfNoCase here
+
+Order Allow,Deny
+Allow from env=philesight_allowed

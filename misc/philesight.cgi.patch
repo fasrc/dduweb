@@ -1,0 +1,23 @@
+diff -rupN a/philesight.cgi b/philesight.cgi
+--- a/philesight.cgi	2012-04-27 07:50:13.000000000 -0400
++++ b/philesight.cgi	2013-08-25 12:00:41.768659000 -0400
+@@ -10,7 +10,7 @@ require 'digest/md5'
+ # Config variables
+ ##############################################################################
+ 
+-$path_db = "/tmp/ps.db"
++$path_db = "philesight.db"
+ $img_size = 800
+ $img_rings = 4
+ $img_gradients = true
+@@ -19,8 +19,8 @@ $show_list = true
+ # Uncomment the following lines to enable caching. Make sure the $path_cache
+ # directory is writable by the httpd user
+ 
+-# $path_cache = "/tmp/philesight"
+-# $cache_maxage = 60
++$path_cache = "cache"
++$cache_maxage = 999999999
+ 
+ ##############################################################################
+ # End of configuration

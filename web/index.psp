@@ -1,0 +1,291 @@
+<%
+"""
+Copyright (c) 2013
+Harvard FAS Research Computing
+John Brunelle <john_brunelle@harvard.edu>
+All right reserved.
+
+index.psp -- an example webpage
+
+DESCRIPTION
+	This is the template for building webpages.  Any code between pairs of 
+	comments like this:
+
+		#--- BEGIN TEMPLATE CODE...
+		#--- ...END TEMPLATE CODE
+	
+	should not need to be modified.
+
+REQUIREMENTS
+	n/a
+
+AUTHOR
+	John Brunelle <john_brunelle@harvard.edu>
+	Harvard FAS Research Computing
+"""
+
+
+
+#--- BEGIN TEMPLATE CODE...
+
+class BreakOut(Exception): pass
+
+try:
+	try:
+		from lilpsp import config, core, org
+		import time
+
+		req.add_common_vars()
+		
+		msg = "request from ip [%s] from user [%s]" % (req.subprocess_env['REMOTE_ADDR'], core.getUsername(session, req))
+		core.log(msg, session, req)
+		
+		core.sessionCheck(session, req)
+		
+		base_url_path = req.subprocess_env['REQUEST_URI'].split('?',1)[0]  #e.g. /PATH/FILENAME.psp, of 'https://SERVER/PATH/FILENAME.psp?FOO=BAR'
+		base_url_dir = os.path.dirname(base_url_path)  #e.g. /PATH, of 'https://SERVER/PATH/FILENAME.psp?FOO=BAR'
+		base_fs_dir  = os.path.dirname(req.subprocess_env['SCRIPT_FILENAME'])
+		
+		#--- ...END TEMPLATE CODE
+
+
+
+		import urllib
+		import ddupy
+
+		
+		username = core.getUsername(session, req)
+		if username is None:
+			raise Exception("internal error: ddu web must be configured to use authentication")
+
+		base_data_dir = os.path.join(base_fs_dir, 'data')
+		
+		
+		#--- begin handling posts to self (job submission)
+
+		if req.subprocess_env['REQUEST_METHOD']=='POST' and req.headers_in.has_key('Referer') and req.headers_in['Referer'].split('?')[0].endswith(req.subprocess_env['REQUEST_URI'].split('?')[0]):
+			if form.has_key('path'):
+				path = str(form['path']).strip()
+				path_in_url = ddupy.makeSimpleText(path)
+
+				t_staged = int(round(time.time()))
+				t_in_url = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime(t_staged))
+
+				metadata_dir = os.path.join(base_data_dir, username, path_in_url, t_in_url, 'metadata')
+				
+				#create metadata_dir
+				try:
+					os.makedirs(metadata_dir)
+				except OSError, e:
+					#(including  e.errno == errno.EEXIST, since it's not supposed to)
+					msg = "unable to create new metadata_dir [%s]"
+					core.log(msg, session, req)  #(catch-all below will log e's details)
+					raise
+
+				#write metadata
+				try:
+					open(os.path.join(metadata_dir, 'username'),'w').write('%s\n' % username)
+					open(os.path.join(metadata_dir, 'path'    ),'w').write('%s\n' % path    )
+					open(os.path.join(metadata_dir, 'status'  ),'w').write('%s\n' % 'staged')
+					open(os.path.join(metadata_dir, 't_staged'),'w').write('%s\n' % t_staged)  #keep this last -- ddrund takes the presence of this to mean it's ready
+				except Exception, e:
+					msg = "unable to write metadata"
+					core.log(msg, session, req)  #(catch-all below will log e's details)
+					raise
+
+				msg = "staged job for user [%s], path [%s], time [%s] at [%s]" % (username, path, t_staged, metadata_dir)
+				core.log(msg, session, req)
+
+				#redirect to self so client refresh does not resubmit:
+				util.redirect(req, base_url_path)
+			else:
+				#FIXME
+				raise Exception("internal error: handling of incomplete form input not yet implemented")
+
+
+
+		#--- BEGIN TEMPLATE CODE...
+
+		req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+		wrote_header = True
+		
+		if config.AUTH_TYPE=='FORM': req.write(org.html_logout_link(session, req))
+
+		#--- ...END TEMPLATE CODE
+
+
+
+		#--- begin page construction
+
+		#run submission form
+%>
+
+		<table style="margin:auto;">
+
+		<tr>
+		<td>
+		<p>
+		<span style="font-size:x-large;"><strong>Harvard FAS Research Computing Storage Usage</strong></span>
+		</p>
+		<p style="width:50em;">
+		Use this page to submit and manage storage usage computations.
+		Where it prompts for <em>path:</em>, enter an absolute filesystem path, such as <span style="white-space:nowrap;"><em>/n/home##/USERNAME</em></span> where <em>##</em> and <em>USERNAME</em> are you particular to your account.
+		Refresh this page in order to see status updates.
+		</p>
+		<p style="width:50em;">
+		Once the job finishes, there will be a results link to an interactive GUI with which you can investigate the usage hierarchy (click inside the concentric pie chart to drill down).
+		Note that the results do not represent live data -- they represent the state for the time between when the job started running and when it finished.
+		</p>
+		<p style="width:50em;">
+		For large filesystems, the storage usage computation job could take many days to run.
+		Note that only data which you have permission to view are included in the results.
+		</p>
+		</td>
+		</tr>
+
+		<tr>
+		<td>
+		<span style="font-size:larger;"><strong>submit a job</strong></span>
+		<form method="post">
+			<table>
+				<tr>
+					<td>path:</td>
+					<td><input type="text" name="path" size="40" /></td>
+				</tr>
+				<tr>
+					<td>&nbsp;</td>
+					<td><input type="submit" value="submit job" /></td>
+				</tr>
+			</table>
+		</form>
+		</td>
+		</tr>
+
+<%
+		#table of runs
+
+		jobs = []
+
+		base_data_dir_user = os.path.join(base_data_dir, username)
+		if os.path.exists(base_data_dir_user):
+			for path_in_url in os.listdir(base_data_dir_user):
+				if path_in_url.startswith('.'): continue
+				for t_in_url in os.listdir(os.path.join(base_data_dir_user, path_in_url)):
+					if t_in_url.startswith('.'): continue
+					job = os.path.join(username, path_in_url, t_in_url)
+					metadata_dir = os.path.join(base_data_dir_user, path_in_url, t_in_url, 'metadata')
+
+					#get metadata
+					try:
+						path = open(os.path.join(metadata_dir,'path'),'r').read().strip()
+						status = open(os.path.join(metadata_dir,'status'),'r').read().strip()
+						status_str = status
+
+						if status=='deleted': continue
+						
+						t_last_updated = None
+						if status=='staged':
+							t_last_updated = float(open(os.path.join(metadata_dir, 't_staged'),'r').read().strip())
+						elif status in ('queued', 'running', 'failed', 'done'):
+							t_last_updated = float(open(os.path.join(metadata_dir, 't_%s' % status),'r').read().strip())
+							try:
+								status_str += ' (job id %s)' % (open(os.path.join(metadata_dir, 'batchjobid'),'r').read().strip())
+							except Exception:
+								pass
+
+						if t_last_updated is not None:
+							t_last_updated_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(t_last_updated))
+						else:
+							t_last_updated_str = 'n/a'
+						
+						if status=='done':
+							result_link = '<a href="job.psp?job=%s&path=%s">results</a>' % (urllib.quote(job), urllib.quote(path))
+						else:
+							result_link = 'n/a'
+					except Exception, e:
+						msg = "unable to read metadata"
+						core.log(msg, session, req)  #(catch-all below will log e's details)
+						raise
+
+					sharing_link = '<a href="sharing.psp?job=%s&path=%s"><small>sharing</small></a>' % (urllib.quote(job), urllib.quote(path))
+					delete_link = '<a href="delete.psp?job=%s&path=%s" onClick="return confirm(\'Click OK if you are sure you want to delete this job.\')"><small>delete</small></a>' % (urllib.quote(job), urllib.quote(path))
+
+					d = {}
+					d['path'] = path
+					d['t_last_updated'] = t_last_updated
+					d['t_last_updated_str'] = t_last_updated_str
+					d['status_str'] = status_str
+					d['result_link'] = result_link
+					d['sharing_link'] = sharing_link
+					d['delete_link'] = delete_link
+
+					jobs.append(d)
+
+		if len(jobs)>0:
+			#begin indent
+%>
+			<tr>
+			<td>
+			<span style="font-size:larger;"><strong>jobs</strong></span>
+			<table border="2" cellpadding="10">
+			<tr>
+				<td><strong>path</strong></td>
+				<td><strong>last updated</strong></td>
+				<td><strong>status</strong></td>
+				<td><strong>results</strong></td>
+				<td><strong><small>sharing</small></strong></td>
+				<td><strong><small>delete</small></strong></td>
+			</tr>
+<%
+		def jobcmp(j1, j2):
+			x = cmp(j1['path'],j2['path'])
+			if x==0:
+				x = -cmp(j1['t_last_updated'],j2['t_last_updated'])
+			return x
+	
+		for job in sorted(jobs, jobcmp):
+			#begin indent
+%>
+			<tr>
+				<td><%= job['path'] %></td>
+				<td><%= job['t_last_updated_str'] %></td>
+				<td><%= job['status_str'] %></td>
+				<td style="text-align:center;"><%= job['result_link'] %></td>
+				<td><%= job['sharing_link'] %></td>
+				<td><%= job['delete_link'] %></td>
+			</tr>
+<%
+		#end indent
+%>
+		</table>
+		</td>
+		</tr>
+		
+		</table>
+<%
+
+
+
+	#--- BEGIN TEMPLATE CODE...
+		
+	except BreakOut:
+		pass
+	
+	req.write(open(os.path.join(base_fs_dir, 'footer.html')).read())
+	wrote_footer = True
+except apache.SERVER_RETURN:
+	##if it's re-raised, sessions start over; passing seems wrong but it's the only way I know of to make sessions persist across redirect
+	#raise
+	pass
+except Exception, e:
+	if not ( 'core' in globals() and 'org' in globals() ):
+		raise  #just bailout and let the server handle it (if configured with PythonDebug On, the traceback will be shown to the user)
+	else:
+		msg = "ERROR: exception when handling user [%s]: %s" % (core.getUsername(session, req), e)
+		core.log(msg, session, req, e)
+		if not 'wrote_header' in globals() and 'base_fs_dir' in globals(): req.write(open(os.path.join(base_fs_dir, 'header.html')).read())
+		req.write(org.errmsg_general(session, req))
+		if not 'wrote_footer' in globals() and 'base_fs_dir' in globals(): req.write(open(os.path.join(base_fs_dir, 'footer.html')).read())
+
+#--- ...END TEMPLATE CODE
+%>
