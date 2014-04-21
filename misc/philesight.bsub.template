@@ -4,6 +4,11 @@
 #BSUB -e lsf.err
 #BSUB -u john_brunelle@harvard.edu
 
+# warm up auto-mounting, since I've seen philesight conclude the contents to be 
+# on a different device, when they are not, and it works if you retry.  Ignore 
+# any failures -- let philesight report them in its own way.
+sudo -u 'DDU_USER' ls -alF 'DDU_PATH'/ &>/dev/null
+
 sudo -u 'DDU_USER' /odyssey/ddu/sw/bin/philesight_wrapper.sh --one-file-system --db philesight.db --index 'DDU_PATH' >philesight.out 2>philesight.err
 status=$?
 
