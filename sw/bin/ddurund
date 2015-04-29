@@ -136,7 +136,7 @@ while [ ! -z "$1" ]; do
 done
 
 #Harvard FAS RC only
-[[ $(hostname -f) == *.rc.fas.harvard.edu ]] && [ -r /etc/profile.d/lsf.sh ] && source /etc/profile.d/lsf.sh
+#[[ $(hostname -f) == *.rc.fas.harvard.edu ]] && [ -r /etc/profile.d/lsf.sh ] && source /etc/profile.d/lsf.sh
 
 set -u
 
@@ -269,7 +269,8 @@ while true; do
 				ln -s "$philesight_sw_dir/philesight.cgi" index.cgi || continue
 
 				#submit job
-				batchjobid=$(cat /odyssey/ddu/misc/philesight.bsub.template | sed -e "s?DDU_USER?$user?" -e "s?DDU_PATH?$path?" | bsub | grep -oP '(?<=Job <)\d+(?=>)')
+				batchjobid=$(cat /odyssey/ddu/misc/philesight.sbatch.template | sed -e "s?DDU_USER?$user?" -e "s?DDU_PATH?$path?" | sbatch | sed 's?Submitted batch job ??')
+				#batchjobid=$(cat /odyssey/ddu/misc/philesight.bsub.template | sed -e "s?DDU_USER?$user?" -e "s?DDU_PATH?$path?" | bsub | grep -oP '(?<=Job <)\d+(?=>)')
 				if [ $? -ne 0 ] || [ -z "$batchjobid" ]; then
 					echo "*** ERROR *** unable to submit job" >&2
 					continue
@@ -289,9 +290,8 @@ while true; do
 					echo "*** ERROR *** unable to get batchjobid" >&2
 					continue
 				fi
-
-				batchjobstatus="$(bjobs "$batchjobid" | awk 'NR==2 {print $3}')"
-				if [ "$batchjobstatus" = 'EXIT' ] || ( [ -z "$batchjobstatus" ] && [ -r "jobdir"/philesight/exit_status ] && [ "$(cat "jobdir"/philesight/exit_status 2>/dev/null)" != '0' ] ); then
+				batchjobstatus="$(squeue -j "$batchjobid" -h -o %T || sacct -j "$batchjobid"  -n --format=State -P | sed -n 1p)"
+				if [ "$batchjobstatus" = 'FAILED' ] || ( [ -z "$batchjobstatus" ] && [ -r "jobdir"/philesight/exit_status ] && [ "$(cat "jobdir"/philesight/exit_status 2>/dev/null)" != '0' ] ); then
 					echo "*** ERROR *** batch job [$batchjobid] failed" >&2
 					echo 'failed' > "$jobdir"/metadata/status
 					date '+%s' > "$jobdir"/metadata/t_failed || continue
@@ -299,21 +299,21 @@ while true; do
 					status_new='failed'
 					update_success=true
 					continue
-				elif [ "$batchjobstatus" = 'DONE' ]; then
+				elif [ "$batchjobstatus" = 'COMPLETED' ]; then
 					echo 'done' > "$jobdir"/metadata/status
 					date '+%s' > "$jobdir"/metadata/t_done || continue
 					
 					status_new='done'
 					update_success=true
 					continue
-				elif [ "$batchjobstatus" = 'RUN' ]; then
+				elif [ "$batchjobstatus" = 'RUNNING' ]; then
 					echo 'running' > "$jobdir"/metadata/status
 					date '+%s' > "$jobdir"/metadata/t_running || continue
 					
 					status_new='running'
 					update_success=true
 					continue
-				elif [ "$batchjobstatus" = 'PEND' ]; then
+				elif [ "$batchjobstatus" = 'PENDING' ]; then
 					status_new='queued'
 					update_success=true
 					continue
